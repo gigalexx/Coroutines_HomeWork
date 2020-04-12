@@ -10,12 +10,14 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
+import okhttp3.*
 import java.io.InputStream
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 
 
 class MainActivity : AppCompatActivity() {
@@ -36,53 +38,65 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun makeApiRequest() {
+        val startTime = System.currentTimeMillis()
         Log.d("Attention", "Run coroutine with IO context")
-        CoroutineScope(IO).launch {
-
-            val url = getRandomCatUrl()
-            var bitmapFromUrl = getBitmapFromUrl(url)
-            updateUI(bitmapFromUrl)
+        val parentJob = CoroutineScope(IO).launch {
+            val deferred = async { getRandomCatUrl() } // async request
+            val bitmap = getBitmapFromUrl(deferred.await())     // sync request
+            updateUI(bitmap)                                              // UI update
         }
 
+        parentJob.invokeOnCompletion {
+            println("Total elapsed time: ${System.currentTimeMillis() - startTime} ")
+        }
     }
 
-    private fun getRandomCatUrl(): String {
-        Log.d("Attention", "Getting url")
+    private suspend fun getRandomCatUrl(): String {
+        return suspendCoroutine { continuation ->
+            Log.d("Attention", "Getting url")
+            var url: String
+            val client = OkHttpClient()
+            val request = Request.Builder()
+                .addHeader(CUSTOME_HEADER_KEY, CUSTOME_HEADER_VALUE)
+                .url(BASE_URL)
+                .build()
+            client.run {
+                newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: java.io.IOException) {
+                        println("Something went wrong :(")
+                        continuation.resumeWithException(e)
+                    }
 
-        val client1 = OkHttpClient();
+                    override fun onResponse(call: Call, response: Response) {
+                        val responseBody = response.body?.string()
+                        val split = responseBody?.split(",")
 
-        val request = Request.Builder()
-            .addHeader(CUSTOME_HEADER_KEY, CUSTOME_HEADER_VALUE)
-            .url(BASE_URL)
-            .build()
-
-        var execute: Response = client1.newCall(request).execute()
-        var responseBody = execute.body?.string()
-
-        val split = responseBody?.split(",")
-        var url = ""
-        for (str in split!!) {
-            if (str.contains("url")) {
-                url = str.split(":")[1]
-                url += ":" + str.split(":")[2]
-                break
+                        for (str in split!!) {
+                            if (str.contains("url")) {
+                                url = str.split(":")[1]
+                                url += ":" + str.split(":")[2]
+                                url = url.replace("\"", "")
+                                continuation.resume(url)
+                            }
+                        }
+                    }
+                })
             }
         }
-
-        return url.replace("\"", "")
-
     }
 
     private fun getBitmapFromUrl(url: String): Bitmap? {
         Log.d("Attention", "Getting Bitmap")
-        val client1 = OkHttpClient();
+        Log.d("Attention", "Bitmap url: $url")
+
+        val client1 = OkHttpClient()
 
         val request = Request.Builder()
             .addHeader(CUSTOME_HEADER_KEY, CUSTOME_HEADER_VALUE)
             .url(url)
             .build()
 
-        var response = client1.newCall(request).execute()
+        val response = client1.newCall(request).execute()
         val inputStream: InputStream? = response.body?.byteStream()
         return BitmapFactory.decodeStream(inputStream)
     }
