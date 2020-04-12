@@ -77,6 +77,7 @@ class MainActivity : AppCompatActivity() {
                                 url += ":" + str.split(":")[2]
                                 url = url.replace("\"", "")
                                 continuation.resume(url)
+                                break
                             }
                         }
                     }
