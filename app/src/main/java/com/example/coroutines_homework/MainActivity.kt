@@ -19,13 +19,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
+private const val BASE_URL = "https://api.thecatapi.com/v1/images/search"
+private const val CUSTOMER_HEADER_KEY = "x-api-key"
+private const val CUSTOMER_HEADER_VALUE = "7d32c131-e5a3-4e02-8a31-689b67ab2aa3"
 
 class MainActivity : AppCompatActivity() {
-
-    private val BASE_URL = "https://api.thecatapi.com/v1/images/search"
-    private val CUSTOME_HEADER_KEY = "x-api-key"
-    private val CUSTOME_HEADER_VALUE = "7d32c131-e5a3-4e02-8a31-689b67ab2aa3"
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -36,68 +34,72 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
     private fun makeApiRequest() {
         val startTime = System.currentTimeMillis()
         Log.d("Attention", "Run coroutine with IO context")
+        val client = OkHttpClient()
+
         val parentJob = CoroutineScope(IO).launch {
-            val deferred = async { getRandomCatUrl() } // async request
-            val bitmap = getBitmapFromUrl(deferred.await())     // sync request
-            updateUI(bitmap)                                              // UI update
+
+            val deferred = async { getRandomCatUrl(client) }      // async request
+
+            val bitmap = getBitmapFromUrl(deferred.await(), client)     // sync request
+
+            updateUI(bitmap)                                                     // UI update
         }
 
-        parentJob.invokeOnCompletion {
+        parentJob.invokeOnCompletion { throwable ->
+            if (throwable != null) {
+                println("Something went wrong: $throwable")
+            }
             println("Total elapsed time: ${System.currentTimeMillis() - startTime} ")
         }
     }
 
-    private suspend fun getRandomCatUrl(): String {
+    private suspend fun getRandomCatUrl(client: OkHttpClient): String {
         return suspendCoroutine { continuation ->
             Log.d("Attention", "Getting url")
-            var url: String
-            val client = OkHttpClient()
             val request = Request.Builder()
-                .addHeader(CUSTOME_HEADER_KEY, CUSTOME_HEADER_VALUE)
+                .addHeader(CUSTOMER_HEADER_KEY, CUSTOMER_HEADER_VALUE)
                 .url(BASE_URL)
                 .build()
+
             client.run {
                 newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: java.io.IOException) {
-                        println("Something went wrong :(")
                         continuation.resumeWithException(e)
                     }
 
                     override fun onResponse(call: Call, response: Response) {
                         val responseBody = response.body?.string()
-                        val split = responseBody?.split(",")
-
-                        for (str in split!!) {
-                            if (str.contains("url")) {
-                                url = str.split(":")[1]
-                                url += ":" + str.split(":")[2]
-                                url = url.replace("\"", "")
-                                continuation.resume(url)
-                                break
-                            }
-                        }
+                        continuation.resume(extractUrlFromResponse(responseBody))
                     }
                 })
             }
         }
     }
 
-    private fun getBitmapFromUrl(url: String): Bitmap? {
-        Log.d("Attention", "Getting Bitmap")
-        Log.d("Attention", "Bitmap url: $url")
+    private fun extractUrlFromResponse(responseBody: String?): String {
+        val split = responseBody?.split(",")
+        var url = ""
+        for (str in split!!) if (str.contains("url")) {
+            url = str.split(":")[1]
+            url += ":" + str.split(":")[2]
+            url = url.replace("\"", "")
+            break
+        }
+        return url
+    }
 
-        val client1 = OkHttpClient()
+    private fun getBitmapFromUrl(url: String, client: OkHttpClient): Bitmap? {
+        Log.d("Attention", "Getting Bitmap by url: $url")
 
         val request = Request.Builder()
-            .addHeader(CUSTOME_HEADER_KEY, CUSTOME_HEADER_VALUE)
+            .addHeader(CUSTOMER_HEADER_KEY, CUSTOMER_HEADER_VALUE)
             .url(url)
             .build()
 
-        val response = client1.newCall(request).execute()
+        val response = client.newCall(request).execute()
         val inputStream: InputStream? = response.body?.byteStream()
         return BitmapFactory.decodeStream(inputStream)
     }
